@@ -45,8 +45,8 @@ Then open <http://localhost:8080>.
 
 ## Deploy
 
-The site is a Cloudflare Worker with static assets, configured in `wrangler.jsonc`.
+The site is an assets-only Cloudflare Worker. `cloudflare.config.ts` names it and binds the custom domain.
 
 ```sh
-cf deploy
+cf deploy site
 ```
