@@ -1,0 +1,710 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pylon Field</title>
+<meta name="description" content="A first-person fight at dusk against walking power pylons, drawn in pixel-art Gaussian splats.">
+<style>
+  :root { font-family: ui-monospace, "Cascadia Mono", Menlo, monospace; background: #04060b; color: #d4f5ff; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #04060b; }
+  #stage { position: fixed; inset: 0; }
+  #stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; image-rendering: pixelated; display: block; }
+  #view { background: #0a1230; cursor: crosshair; }
+  #over, #hud, #hurt, #flash, #black { pointer-events: none; position: absolute; inset: 0; }
+  #hurt { opacity: 0; background: radial-gradient(ellipse at center, transparent 45%, #a8161e 130%); }
+  #flash { opacity: 0; background: #d4f5ff; }
+  #black { opacity: 0; background: #020308; transition: opacity 1.6s; }
+  #black.on { opacity: 1; transition: opacity .08s; }
+  #hud { text-transform: uppercase; letter-spacing: 2px; font-size: 13px; text-shadow: 0 2px 0 #04060b; }
+  .driving .game { display: none; }
+  #cross { position: absolute; left: 50%; top: 50%; width: 22px; height: 22px; margin: -11px; }
+  #cross::before, #cross::after { content: ""; position: absolute; background: #fff0b0; opacity: .85; }
+  #cross::before { left: 10px; top: 0; width: 2px; height: 22px; clip-path: polygon(0 0, 100% 0, 100% 32%, 0 32%, 0 68%, 100% 68%, 100% 100%, 0 100%); }
+  #cross::after { top: 10px; left: 0; height: 2px; width: 22px; clip-path: polygon(0 0, 32% 0, 32% 100%, 0 100%, 0 0, 68% 0, 100% 0, 100% 100%, 68% 100%, 68% 0); }
+  #cross.hit::before, #cross.hit::after { background: #ff2a2a; opacity: 1; }
+  #cross.crit { transform: rotate(45deg) scale(1.5); }
+  #vitals { position: absolute; left: 24px; bottom: 22px; }
+  .bar { width: 220px; height: 12px; border: 2px solid #d4f5ff; margin-top: 6px; padding: 1px; }
+  .bar i { display: block; height: 100%; width: 100%; background: #ff2a2a; }
+  #dodge { margin-top: 8px; width: 90px; height: 6px; border-width: 1px; }
+  #dodge i { background: #58c0ff; }
+  #count { position: absolute; right: 24px; top: 20px; text-align: right; line-height: 1.7; }
+  #count b, #tools b { color: #ff8468; font-weight: 400; }
+  #tools { position: absolute; left: 280px; bottom: 22px; line-height: 1.7; color: #5d6f8f; }
+  #tools b { color: #fff0b0; }
+  #ammo { font-size: 24px; letter-spacing: 3px; color: #fff0b0; margin-bottom: 4px; }
+  #ammo.low, #ammo .low { color: #ff2a2a; }
+  #stamp { position: absolute; left: 24px; top: 20px; color: #ffb838; opacity: .8; }
+  #say { position: absolute; left: 0; right: 0; top: 22%; text-align: center; font-size: 22px; letter-spacing: 6px; opacity: 0; transition: opacity .5s; }
+  #say.on { opacity: 1; }
+  #say small { display: block; font-size: 12px; letter-spacing: 3px; margin-top: 10px; color: #ff8468; }
+  #prompt { position: absolute; left: 50%; top: 60%; transform: translateX(-50%); text-align: center; color: #fff0b0; }
+  #prompt .bar { width: 160px; margin: 6px auto 0; border-color: #fff0b0; }
+  #prompt .bar i { background: #ffb838; width: 0; }
+  /* cutter targets, pinned to the legs and feet they belong to */
+  #marks { position: absolute; inset: 0; overflow: hidden; }
+  .mark { position: absolute; width: 0; height: 0; display: none; color: #8fa3c4; font-size: 11px; letter-spacing: 2px; white-space: nowrap; }
+  .mark i { position: absolute; left: -7px; top: -7px; width: 14px; height: 14px; border: 2px solid currentColor; transform: rotate(45deg); opacity: .55; }
+  .mark b { position: absolute; left: 50%; top: 20px; transform: translateX(-50%); font-weight: 400; display: none; }
+  .mark.lifted { color: #5d6f8f; }
+  .mark.lifted i { border-style: dashed; opacity: .4; }
+  .mark.near { color: #fff0b0; }
+  .mark.near i { left: -15px; top: -15px; width: 30px; height: 30px; opacity: 1; border-width: 3px; background: #ffb83833; animation: beat .5s steps(2) infinite; }
+  .mark.near b { display: block; top: 30px; background: #04060bcc; padding: 2px 6px; }
+  .mark.active { color: #ffb838; }
+  .mark.active i { animation: none; border-color: #fff0b0; background: conic-gradient(#ffb838 var(--done, 0%), #04060b99 0); }
+  @keyframes beat { 50% { transform: rotate(45deg) scale(1.18); } }
+  #caption { position: absolute; left: 0; right: 0; bottom: 9%; text-align: center; font-size: 15px; letter-spacing: 4px; color: #fff0b0; opacity: 0; transition: opacity .4s; }
+  #caption.on { opacity: 1; }
+  #skip { position: absolute; right: 24px; bottom: 22px; color: #5d6f8f; display: none; }
+  .driving #skip { display: block; }
+  #veil { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; gap: 14px; background: #04060bcc; cursor: pointer; }
+  #veil[hidden] { display: none; }
+  #veil h1 { margin: 0; font-size: 34px; font-weight: 400; letter-spacing: 12px; color: #ff2a2a; }
+  #veil p { margin: 0; font-size: 12px; letter-spacing: 3px; line-height: 2; text-transform: uppercase; color: #8fa3c4; }
+  #veil p b { color: #fff0b0; font-weight: 400; }
+</style>
+<div id="stage" class="driving">
+  <canvas id="view" aria-label="First-person view of a dusk field ringed by power pylons"></canvas>
+  <canvas id="over"></canvas>
+  <div id="flash"></div>
+  <div id="hurt"></div>
+  <div id="hud">
+    <div id="stamp"></div>
+    <div id="count" class="game"></div>
+    <div id="say"></div>
+    <div id="cross" class="game"></div>
+    <div id="marks" class="game"></div>
+    <div id="prompt" class="game" hidden><span></span><div class="bar"><i></i></div></div>
+    <div id="vitals" class="game">Pulse<div class="bar" id="pulse"><i></i></div><div class="bar" id="dodge"><i></i></div></div>
+    <div id="tools" class="game"></div>
+    <div id="caption"></div>
+    <div id="skip">Enter · skip</div>
+  </div>
+  <div id="black"></div>
+  <div id="veil">
+    <h1 id="title">PYLON FIELD</h1>
+    <p id="blurb">Route 9, twenty to nine. The storm has been dry all evening.</p>
+    <p><b>Mouse</b> or <b>arrow keys</b> look · <b>WASD</b> move · <b>Shift</b> run · <b>Space</b> dodge<br>
+      <b>Click</b> or <b>F</b> use · <b>R</b> reload · <b>1</b> rivet carbine · <b>2</b> bolt cutters · <b>Q</b> swap<br>Rivets are scarce. Legs can be shot off, or cut from underneath.</p>
+    <p id="go"><b>Building the field…</b></p>
+  </div>
+</div>
+<script src="./vendor/ink-studio/dist/ink-studio.browser.js"></script>
+<script type="module">
+import { createRenderer } from './vendor/ink-studio/webgl.mjs';
+
+// The scene is a CommonJS file (the toolkit's CLI can load it too), so give it its own module object.
+const source = { exports: {} };
+new Function('module', await (await fetch('./pylon-field.js')).text())(source);
+const kit = { KIT, makeBuilder, makeSculpt, PixelLook };
+const scene = source.exports(kit);
+const $ = id => document.getElementById(id);
+const stageEl = $('stage'), canvas = $('view'), over = $('over'), pen = over.getContext('2d'), veil = $('veil');
+const renderer = createRenderer(canvas, { toolkit: kit });
+const ROWS = 300;
+const keys = new Set(), look = { yaw: 0, pitch: 0 };
+let world, game, time = 0, previous, playing = false, firing = false, ended = false, sayTimer, captionTimer;
+let tool = 'gun', dodge = false, reload = false, kick = 0, flash = 0, swap = 0, snip = 0;
+
+// ---- sound: everything is synthesised, nothing to load ----
+let audio, hum, engine;
+const sound = {
+  start() {
+    if (audio) return audio.resume();
+    audio = new AudioContext();
+    const out = audio.createGain();
+    out.gain.value = 0.5;
+    out.connect(audio.destination);
+    this.out = out;
+    const length = audio.sampleRate, buffer = audio.createBuffer(1, length, length), data = buffer.getChannelData(0);
+    for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
+    this.noise = buffer;
+    this.hum(true);
+  },
+  drone(parts) {
+    const gain = audio.createGain(), oscs = [];
+    gain.gain.value = 0;
+    gain.connect(this.out);
+    for (const [f, type, level] of parts) {
+      const osc = audio.createOscillator(), g = audio.createGain();
+      osc.type = type;
+      osc.frequency.value = f;
+      g.gain.value = level;
+      osc.connect(g).connect(gain);
+      osc.start();
+      oscs.push(osc);
+    }
+    return { gain, oscs };
+  },
+  hum(on) {
+    if (!audio) return;
+    hum ??= this.drone([[50, 'sawtooth', 0.05], [100.4, 'sine', 0.12], [149.3, 'sine', 0.04]]);
+    hum.gain.gain.setTargetAtTime(on ? 1 : 0, audio.currentTime, on ? 1.2 : 0.08);
+  },
+  // the car: two detuned saws whose pitch follows the speedometer
+  engine(speed) {
+    if (!audio) return;
+    engine ??= this.drone([[40, 'sawtooth', 0.1], [40.7, 'sawtooth', 0.08], [80, 'square', 0.02]]);
+    engine.gain.gain.setTargetAtTime(speed === null ? 0 : 0.8, audio.currentTime, 0.1);
+    if (speed !== null) engine.oscs.forEach((osc, i) => osc.frequency.setTargetAtTime((38 + Math.abs(speed) * 7) * (i === 2 ? 2 : 1 + i * 0.012), audio.currentTime, 0.08));
+  },
+  tone(type, from, to, dur, level, delay = 0) {
+    if (!audio || level <= 0.002) return;
+    const at = audio.currentTime + delay, osc = audio.createOscillator(), g = audio.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(from, at);
+    osc.frequency.exponentialRampToValueAtTime(Math.max(1, to), at + dur);
+    g.gain.setValueAtTime(level, at);
+    g.gain.exponentialRampToValueAtTime(0.0008, at + dur);
+    osc.connect(g).connect(this.out);
+    osc.start(at);
+    osc.stop(at + dur + 0.02);
+  },
+  hiss(freq, q, dur, level, delay = 0) {
+    if (!audio || level <= 0.002) return;
+    const at = audio.currentTime + delay, src = audio.createBufferSource(), band = audio.createBiquadFilter(), g = audio.createGain();
+    src.buffer = this.noise;
+    src.loop = true;
+    band.type = 'bandpass';
+    band.frequency.value = freq;
+    band.Q.value = q;
+    g.gain.setValueAtTime(level, at);
+    g.gain.exponentialRampToValueAtTime(0.0008, at + dur);
+    src.connect(band).connect(g).connect(this.out);
+    src.start(at, Math.random());
+    src.stop(at + dur + 0.02);
+  }
+};
+const cues = {
+  shot() {
+    kick = 1;
+    flash = 1;
+    flashShape = Math.random() * 6;
+    const [x, y] = G(0.3, 10, 26);
+    casings.push({ x: ox + x, y: oy + y, vx: 90 + Math.random() * 80, vy: -150 - Math.random() * 70, life: 0.7 });
+    sound.hiss(2600, 0.9, 0.06, 0.5);
+    sound.tone('square', 190, 70, 0.05, 0.25);
+    sound.tone('triangle', 900, 400, 0.03, 0.1);
+  },
+  dry() { sound.tone('square', 1400, 1200, 0.03, 0.12); say('', me().reserve ? 'R · reload' : 'Out of rivets — 2 · bolt cutters', 900); },
+  reload() { sound.tone('square', 500, 300, 0.05, 0.15); sound.hiss(1200, 2, 0.1, 0.25, 0.25); sound.tone('square', 300, 520, 0.05, 0.18, 1.05); sound.hiss(2000, 2, 0.08, 0.3, 1.3); },
+  ammo() { sound.tone('triangle', 660, 990, 0.12, 0.2); sound.tone('triangle', 990, 1320, 0.12, 0.2, 0.1); say('', 'Rivets', 800); },
+  legbreak({ vol, left }) {
+    sound.tone('sawtooth', 520, 60, 0.6, 0.25 * vol + 0.1);
+    sound.hiss(1800, 1.5, 0.4, 0.5 * vol + 0.1);
+    say('', left > 2 ? 'Leg off — it limps' : left > 1 ? 'Two legs off — it drags' : 'It cannot stand', 1400);
+  },
+  ping({ vol }) { mark('hit'); sound.tone('triangle', 1500 + Math.random() * 900, 900, 0.16, 0.25 * vol + 0.05); },
+  crit({ vol }) { mark('hit crit'); sound.tone('square', 2600, 3400, 0.07, 0.16); sound.tone('triangle', 3100, 1400, 0.3, 0.3 * vol + 0.08); },
+  stomp({ vol }) { sound.tone('sine', 85, 28, 0.35, Math.min(0.9, vol * 1.3)); sound.hiss(160, 0.6, 0.25, vol * 0.5); },
+  clang({ vol }) { sound.tone('square', 310, 190, 0.3, 0.3 * vol); sound.hiss(2600, 2, 0.25, 0.5 * vol); },
+  wake({ vol }) { sound.hiss(90, 0.5, 2.6, 0.5 * vol + 0.15); sound.tone('sawtooth', 48, 130, 2.4, 0.12 * vol + 0.05); },
+  uproot({ vol }) { sound.tone('sawtooth', 300, 70, 1.1, 0.2 * vol + 0.06); sound.hiss(500, 0.4, 0.8, 0.5 * vol + 0.1); },
+  windup({ vol }) { sound.tone('square', 220, 880, 0.6, 0.1 * vol + 0.04); },
+  hurt() { sound.hiss(300, 0.3, 0.5, 0.9); sound.tone('sine', 140, 40, 0.4, 0.6); },
+  kill({ vol }) { sound.tone('sawtooth', 420, 30, 1.7, 0.22 * vol + 0.1); sound.hiss(2400, 1, 0.5, 0.35); },
+  thunder({ delay, vol }) { sound.hiss(70, 0.3, 2.8, 0.9 * vol, delay); sound.hiss(240, 0.5, 0.5, 0.5 * vol, delay); sound.tone('sine', 55, 24, 2.2, 0.5 * vol, delay); },
+  dodge() { sound.hiss(900, 0.5, 0.2, 0.35); },
+  evade() { say('', 'Dodged', 700); sound.tone('sine', 880, 1320, 0.12, 0.12); },
+  snip({ n }) { snip = 1; sound.tone('square', 1200, 300, 0.07, 0.3); sound.hiss(3200, 3, 0.12, 0.4); if (n) say('', `Leg ${n} of 4`, 600); },
+  felled() { sound.tone('sawtooth', 380, 28, 1.8, 0.3); say('Cut down', 'It never woke'); },
+  angry() { setTimeout(() => say('It felt that', 'The nearest one is coming up angry'), 1500); },
+  caption({ text }) {
+    $('caption').textContent = text;
+    $('caption').classList.add('on');
+    clearTimeout(captionTimer);
+    captionTimer = setTimeout(() => $('caption').classList.remove('on'), 2600);
+  },
+  brake() { sound.hiss(2100, 6, 0.7, 0.4); },
+  stare() { sound.hum(false); sound.tone('sine', 62, 58, 3, 0.5); sound.tone('sawtooth', 933, 940, 2.6, 0.05); },
+  reverse() { sound.tone('sawtooth', 300, 700, 1.4, 0.07); },
+  leap() { sound.tone('sawtooth', 90, 420, 1.6, 0.16); },
+  crash() {
+    $('black').classList.add('on');
+    sound.engine(null);
+    sound.hiss(400, 0.2, 1.4, 1);
+    sound.hiss(3000, 1, 0.6, 0.7);
+    sound.tone('sine', 110, 20, 1.2, 0.9);
+  },
+  begin() {
+    look.yaw = game.player.yaw;
+    look.pitch = game.player.pitch;
+    sound.engine(null);
+    sound.hum(false);
+    $('black').classList.remove('on');
+    $('caption').classList.remove('on');
+    stageEl.classList.remove('driving');
+    setTimeout(() => say('Get away from the car', 'Two are already walking'), 900);
+  },
+  wave({ n, of }) { say(n === 1 ? 'The ring is pulling free' : `The ring · ${n} of ${of}`, 'Shoot the lamps'); },
+  lull() { say('Quiet', 'Fallen pylons leave rivets · 2 · bolt cutters shear a sleeping one at its feet', 5200); sound.tone('sine', 660, 660, 0.5, 0.06); },
+  win() { finish('THE GRID IS DOWN', 'Ten pylons lie in the grass. The storm moves on without them.'); },
+  lose() { finish('PINNED', 'The lamps wink back on, one by one.'); }
+};
+
+const me = () => game.player;
+function mark(name) {
+  $('cross').className = 'game ' + name;
+  clearTimeout(mark.timer);
+  mark.timer = setTimeout(() => $('cross').className = 'game', 90);
+}
+function say(text, small = '', hold = 3200) {
+  $('say').innerHTML = text + (small ? `<small>${small}</small>` : '');
+  $('say').classList.add('on');
+  clearTimeout(sayTimer);
+  sayTimer = setTimeout(() => $('say').classList.remove('on'), hold);
+}
+function finish(title, blurb) {
+  ended = true;
+  setTimeout(() => {
+    document.exitPointerLock?.();
+    $('title').textContent = title;
+    $('blurb').textContent = `${blurb} ${game.kills} of ${game.total} felled.`;
+    $('go').innerHTML = '<b>Click to wake beside the wreck again</b>';
+    veil.hidden = false;
+    playing = false;
+  }, 2400);
+}
+
+// ---- input ----
+// Where the pointer cannot be captured (an embedded preview, say) the mouse still turns the view while it is over the page.
+const lock = () => canvas.requestPointerLock?.()?.catch?.(() => {});
+function begin() {
+  if (!world) return;
+  sound.start();
+  if (ended) {
+    ended = false;
+    game = world.restart(false);
+    $('say').classList.remove('on');
+  }
+  veil.hidden = true;
+  playing = true;
+  lock();
+}
+veil.onclick = begin;
+canvas.onclick = () => { if (playing && document.pointerLockElement !== canvas) lock(); };
+document.addEventListener('pointerlockchange', () => {
+  if (document.pointerLockElement === canvas || ended || !playing) return;
+  // Esc pauses
+  playing = false;
+  firing = false;
+  sound.engine(null);
+  $('go').innerHTML = '<b>Paused · click to resume</b>';
+  veil.hidden = false;
+});
+addEventListener('mousemove', e => {
+  if (!playing) return;
+  look.yaw -= e.movementX * 0.0023;
+  look.pitch = Math.min(1.35, Math.max(-1.2, look.pitch - e.movementY * 0.0023));
+});
+addEventListener('mousedown', e => { if (e.button === 0 && playing) firing = true; });
+addEventListener('mouseup', e => { if (e.button === 0) firing = false; });
+addEventListener('wheel', () => { if (playing) pick(tool === 'gun' ? 'cutters' : 'gun'); }, { passive: true });
+addEventListener('keydown', e => {
+  if (e.code === 'Space' || e.code.startsWith('Arrow')) e.preventDefault();
+  if (!e.repeat && playing) {
+    if (e.code === 'Space') dodge = true;
+    if (e.code === 'Digit1') pick('gun');
+    if (e.code === 'Digit2') pick('cutters');
+    if (e.code === 'KeyQ') pick(tool === 'gun' ? 'cutters' : 'gun');
+    if (e.code === 'Enter') game.skip();
+    if (e.code === 'KeyR') reload = true;
+  }
+  keys.add(e.code);
+});
+addEventListener('keyup', e => keys.delete(e.code));
+addEventListener('blur', () => { keys.clear(); firing = false; });
+const axis = (plus, minus) => (keys.has(plus) ? 1 : 0) - (keys.has(minus) ? 1 : 0);
+function pick(next) {
+  if (next === tool) return;
+  tool = next;
+  swap = 1;
+  sound.tone('square', 500, 700, 0.05, 0.08);
+}
+
+// ---- what is drawn over the scene: your hands, or the inside of the car ----
+// Everything here is rasterised by hand into one pixel buffer: hard edges, a fixed ramp of colours, ordered dither for
+// shading and a one-pixel ink outline. Nothing is antialiased, so it sits on the same grid as the scene behind it.
+let image, pixels, CW = 0, CH = 0, ox = 0, oy = 0, spin = null;
+const packed = new Map();
+const ink = hex => {
+  if (!packed.has(hex)) {
+    const n = parseInt(hex.slice(1), 16);
+    packed.set(hex, (0xff000000 | (n & 255) << 16 | (n >> 8 & 255) << 8 | n >> 16) >>> 0);
+  }
+  return packed.get(hex);
+};
+const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
+const place = ([x, y]) => (spin ? [ox + spin.x + x * spin.c - y * spin.s, oy + spin.y + x * spin.s + y * spin.c] : [ox + x, oy + y]);
+// Fill one contour, or several with even-odd holes. mix = [colour, share] dithers a second colour through the first.
+function fill(contours, color, mix) {
+  if (typeof contours[0][0] === 'number') contours = [contours];
+  const edges = [];
+  let top = Infinity, bottom = -Infinity;
+  for (const contour of contours) {
+    const points = contour.map(place);
+    points.forEach((a, i) => {
+      const b = points[(i + 1) % points.length];
+      if (a[1] === b[1]) return;
+      edges.push(a[1] < b[1] ? [a, b] : [b, a]);
+      top = Math.min(top, a[1], b[1]);
+      bottom = Math.max(bottom, a[1], b[1]);
+    });
+  }
+  const first = ink(color), second = mix ? ink(mix[0]) : 0, level = mix ? mix[1] * 16 : 0, xs = [];
+  for (let y = Math.max(0, Math.ceil(top - 0.5)); y <= Math.min(CH - 1, Math.floor(bottom - 0.5)); y++) {
+    const sy = y + 0.5;
+    xs.length = 0;
+    for (const [a, b] of edges) if (sy >= a[1] && sy < b[1]) xs.push(a[0] + (b[0] - a[0]) * (sy - a[1]) / (b[1] - a[1]));
+    xs.sort((p, q) => p - q);
+    for (let k = 0; k + 1 < xs.length; k += 2)
+      for (let x = Math.max(0, Math.round(xs[k])), end = Math.min(CW, Math.round(xs[k + 1])); x < end; x++)
+        pixels[y * CW + x] = mix && BAYER[((y - oy) & 3) * 4 + ((x - ox) & 3)] < level ? second : first;
+  }
+}
+const rect = (x, y, w, h, color, mix) => fill([[x, y], [x + w, y], [x + w, y + h], [x, y + h]], color, mix);
+const oval = (cx, cy, rx, ry, from = 0, to = Math.PI * 2, n = 30) =>
+  Array.from({ length: n }, (_, i) => { const a = from + (to - from) * i / (n - 1 + (to - from > 6.2 ? 1 : 0)); return [cx + Math.cos(a) * rx, cy + Math.sin(a) * ry]; });
+const stroke = (a, b, w, color, mix) => {
+  const dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy) || 1, nx = -dy / l * w / 2, ny = dx / l * w / 2;
+  fill([[a[0] + nx, a[1] + ny], [b[0] + nx, b[1] + ny], [b[0] - nx, b[1] - ny], [a[0] - nx, a[1] - ny]], color, mix);
+};
+// one-pixel outline round everything drawn so far
+function outline(color) {
+  const edge = ink(color), found = [];
+  for (let y = 0; y < CH; y++)
+    for (let x = 0, i = y * CW; x < CW; x++, i++)
+      if (!pixels[i] && ((x && pixels[i - 1]) || (x < CW - 1 && pixels[i + 1]) || (y && pixels[i - CW]) || (y < CH - 1 && pixels[i + CW]))) found.push(i);
+  for (const i of found) pixels[i] = edge;
+}
+
+const INK = '#04060b', M1 = '#0e131d', M2 = '#19202f', M3 = '#273247', M4 = '#3d4c6b', M5 = '#6f83ab', M6 = '#b4c4e0';
+const G1 = '#16160e', G2 = '#2a281a', G3 = '#45402b', G4 = '#69603f', G5 = '#938859';
+const S1 = '#0b0e0a', S2 = '#151a12', S3 = '#232b1c';
+const B1 = '#241d0c', B2 = '#40361a', B3 = '#665829', B4 = '#93803e';
+const R1 = '#33090c', R2 = '#5a1014', R3 = '#a8161e', R4 = '#ff2a2a', AMBER = '#ffb838', PALE = '#fff0b0';
+
+// The carbine is described in its own space (u along the barrel from the stock to the muzzle, s across, t up)
+// and laid onto the screen with a little perspective, so every part agrees about where the barrel points.
+const REAR = [122, 60], MUZZLE = [20, -56], ACROSS = [0.8, -0.42], BULK = 2.2;
+const G = (u, s, t) => {
+  const k = (1 - 0.5 * u) * BULK;
+  return [REAR[0] + (MUZZLE[0] - REAR[0]) * u + k * ACROSS[0] * s, REAR[1] + (MUZZLE[1] - REAR[1]) * u + k * (ACROSS[1] * s - t)];
+};
+// a box seen from behind and to the left: its left flank, its top, and optionally the end facing you
+const slab = (u0, u1, s0, s1, t0, t1, top, side, back, mix) => {
+  fill([G(u0, s0, t0), G(u1, s0, t0), G(u1, s0, t1), G(u0, s0, t1)], side, mix);
+  fill([G(u0, s0, t1), G(u1, s0, t1), G(u1, s1, t1), G(u0, s1, t1)], top);
+  if (back) fill([G(u0, s0, t0), G(u0, s1, t0), G(u0, s1, t1), G(u0, s0, t1)], back);
+};
+const flank = (u0, u1, t0, t1, s, color, mix) => fill([G(u0, s, t0), G(u1, s, t0), G(u1, s, t1), G(u0, s, t1)], color, mix);
+const casings = [];
+let flashShape = 0;
+
+function drawGun(reload) {
+  // 0..1 through a reload: the old magazine drops away, a fresh one comes up and seats
+  const magDrop = reload <= 0 ? 0 : reload < 0.45 ? reload / 0.45 * 70 : reload < 0.6 ? 70 : (1 - (reload - 0.6) / 0.4) * 70;
+  // support arm, coming in from the lower left to hold the handguard
+  const wrist = G(0.52, -9.2, -3), palm = G(0.69, -9.2, -3);
+  fill([palm, wrist, [wrist[0] - 34, wrist[1] + 120], [palm[0] - 78, palm[1] + 120]], S2, [S3, 0.3]);
+  fill([palm, [palm[0] - 78, palm[1] + 120], [palm[0] - 84, palm[1] + 120], [palm[0] - 5, palm[1] + 3]], S3);
+  // barrel and muzzle brake
+  slab(0.8, 0.97, -2.6, 2.6, 9, 14.5, M5, M3);
+  slab(0.95, 1.03, -4.4, 4.4, 7, 16.5, M4, M2, M3);
+  for (const u of [0.965, 0.99, 1.015]) flank(u, u + 0.012, 9.5, 14, -4.4, INK);
+  // gas block and hooded front sight
+  slab(0.74, 0.81, -5.5, 5.5, 5, 20, M4, M2, M3);
+  slab(0.765, 0.785, -1.2, 1.2, 20, 33, M5, M3, M4);
+  slab(0.755, 0.795, -5.5, -3.8, 20, 30, M4, M2, M3);
+  slab(0.755, 0.795, 3.8, 5.5, 20, 30, M4, M2, M3);
+  // handguard: slotted flank, darker toward the belly, a ribbed rail on top
+  slab(0.44, 0.74, -8.5, 8.5, 2, 20, M4, M3, null);
+  flank(0.44, 0.74, 2, 9, -8.5, M2, [M3, 0.35]);
+  flank(0.44, 0.74, 18.5, 20, -8.5, M5);
+  for (let i = 0; i < 6; i++) flank(0.465 + i * 0.045, 0.49 + i * 0.045, 10.5, 16, -8.5, INK);
+  slab(0.44, 0.74, -3.2, 3.2, 20, 23, M5, M2, null);
+  for (let i = 0; i < 9; i++) fill([G(0.455 + i * 0.032, -3.2, 23), G(0.468 + i * 0.032, -3.2, 23), G(0.468 + i * 0.032, 3.2, 23), G(0.455 + i * 0.032, 3.2, 23)], M2);
+  // the support hand: four fingers over the flank
+  fill([G(0.5, -9.2, -3), G(0.69, -9.2, -3), G(0.69, -9.2, 11), G(0.5, -9.2, 13)], G3, [G2, 0.3]);
+  for (let f = 0; f < 4; f++) {
+    const u = 0.505 + f * 0.047;
+    flank(u, u + 0.038, 9 - f * 0.4, 14 - f * 0.5, -9.4, G4);
+    flank(u, u + 0.038, 13 - f * 0.5, 14.5 - f * 0.5, -9.4, G5);
+    flank(u + 0.038, u + 0.047, -3, 13, -9.4, G1);
+  }
+  // receiver: the body of the gun, with its bolt track, charging handle and pins
+  slab(-0.3, 0.44, -10.5, 10.5, 0, 27, M4, M3, M2);
+  flank(-0.3, 0.44, 0, 9, -10.5, M2, [M3, 0.3]);
+  flank(-0.3, 0.44, 25.5, 27, -10.5, M5);
+  flank(0.1, 0.4, 17, 20, -10.5, INK);
+  slab(0.27, 0.32, -14, -10.5, 16, 21, M6, M4, M5);
+  flank(0.02, 0.08, 6, 12, -10.5, M1);
+  flank(0.045, 0.06, 8, 10, -10.5, R4);
+  for (const u of [0.14, 0.38]) flank(u, u + 0.015, 4, 6.5, -10.5, M1);
+  slab(-0.3, 0.44, -3.4, 3.4, 27, 30, M5, M2, M3);
+  for (let i = 0; i < 12; i++) fill([G(0.03 + i * 0.034, -3.4, 30), G(0.044 + i * 0.034, -3.4, 30), G(0.044 + i * 0.034, 3.4, 30), G(0.03 + i * 0.034, 3.4, 30)], M2);
+  // rear sight: two ears with a notch between
+  slab(0.05, 0.09, -6, -2.6, 30, 40, M5, M3, M4);
+  slab(0.05, 0.09, 2.6, 6, 30, 40, M5, M3, M4);
+  // magazine: a long curved box, the thing that says this is not a shotgun
+  const mag = (u, t) => { const p = G(u + (-t / 46) * 0.05, 0, t); return [p[0], p[1] + magDrop]; };
+  const magSide = (u0, u1, t0, t1, s, color, mix) => {
+    const k = (1 - 0.5 * u0) * BULK, off = [k * ACROSS[0] * s, k * ACROSS[1] * s];
+    fill([mag(u0, t0), mag(u1, t0), mag(u1, t1), mag(u0, t1)].map(([x, y]) => [x + off[0], y + off[1]]), color, mix);
+  };
+  if (reload <= 0 || reload > 0.05) {
+    magSide(0.2, 0.33, -52, 0, -6, B2, [B1, 0.3]);
+    magSide(0.2, 0.33, -52, -49, -6, B1);
+    magSide(0.2, 0.215, -52, 0, -6, B3);
+    for (let i = 1; i < 5; i++) magSide(0.2, 0.33, -i * 10 - 1, -i * 10 + 1, -6, B1);
+    magSide(0.2, 0.2, -52, 0, 0, B3);
+    fill([mag(0.2, 0), mag(0.2, -52), [mag(0.2, -52)[0] + 15, mag(0.2, -52)[1] - 8], [mag(0.2, 0)[0] + 15, mag(0.2, 0)[1] - 8]].map(([x, y]) => [x - 8, y + 4]), B3, [B4, 0.25]);
+  }
+  // trigger guard, grip and the firing hand
+  flank(0.1, 0.2, -13, -11, -4, M1);
+  flank(0.185, 0.2, -11, 0, -4, M1);
+  fill([G(-0.02, -8, 0), G(0.11, -8, 0), G(0.07, -8, -44), G(-0.08, -8, -40)], G3, [G2, 0.35]);
+  for (let f = 0; f < 3; f++) {
+    fill([G(0.11 - f * 0.012, -8.2, -8 - f * 11), G(0.15 - f * 0.012, -8.2, -10 - f * 11), G(0.14 - f * 0.012, -8.2, -19 - f * 11), G(0.1 - f * 0.012, -8.2, -17 - f * 11)], G4);
+    fill([G(0.11 - f * 0.012, -8.2, -8 - f * 11), G(0.15 - f * 0.012, -8.2, -10 - f * 11), G(0.148 - f * 0.012, -8.2, -12 - f * 11), G(0.108 - f * 0.012, -8.2, -10 - f * 11)], G5);
+  }
+  fill([G(-0.04, -10.8, 2), G(0.13, -10.8, 6), G(0.14, -10.8, 12), G(-0.04, -10.8, 11)], G4);
+  fill([G(-0.04, -10.8, 9), G(0.14, -10.8, 10), G(0.14, -10.8, 12), G(-0.04, -10.8, 11)], G5);
+  fill([G(-0.08, -8, -40), G(0.07, -8, -44), [260, 260], [130, 260]], S2, [S3, 0.3]);
+  outline(INK);
+  // spent cases, thrown up and to the right
+  for (const c of casings) {
+    rect(c.x - ox, c.y - oy, 3, 2, AMBER);
+    rect(c.x - ox, c.y - oy, 1, 1, PALE);
+  }
+  if (flash > 0) {
+    // a fresh ragged star each shot
+    const [fx, fy] = G(1.07, 0, 12), r = 9 + flash * 9, star = [];
+    for (let i = 0; i < 12; i++) {
+      const a = i / 12 * Math.PI * 2 + flashShape, k = i % 2 ? 0.42 : 0.75 + 0.5 * Math.abs(Math.sin(flashShape * (i + 3)));
+      star.push([fx + Math.cos(a) * r * k, fy + Math.sin(a) * r * k]);
+    }
+    fill(star, AMBER, [R4, 0.2]);
+    fill(oval(fx, fy, r * 0.42, r * 0.42, 0, Math.PI * 2, 10), PALE);
+  }
+}
+
+function drawCutters(biting) {
+  // Long-handled bolt cutters in both hands, jaws up at the crosshair; they bite shut on each cut.
+  const open = 0.3 * (1 - snip) + 0.05;
+  for (const side of [-1, 1]) {
+    spin = { x: 0, y: -62, c: Math.cos(side * open), s: Math.sin(side * open) };
+    const m = (points, color, mix) => fill(points.map(([x, y]) => [x * side, y]), color, mix);
+    // sleeve and fist on the grip
+    m([[-60, 78], [-96, 62], [-190, 190], [-110, 210]], S2, [S3, 0.3]);
+    // handle: forged steel by the pivot, a red dipped grip below
+    m([[5, -2], [-9, 5], [-54, 98], [-36, 104]], M3, [M2, 0.35]);
+    m([[5, -2], [1, -2], [-41, 96], [-36, 104]], M5);
+    m([[-30, 52], [-47, 45], [-116, 196], [-88, 206]], R3, [R2, 0.3]);
+    m([[-30, 52], [-35, 50], [-97, 202], [-88, 206]], R4);
+    m([[-47, 45], [-52, 48], [-118, 190], [-113, 187]], R1);
+    for (let i = 0; i < 5; i++) m([[-38 - i * 7, 60 + i * 15], [-55 - i * 7, 53 + i * 15], [-56 - i * 7, 56 + i * 15], [-39 - i * 7, 63 + i * 15]], R1);
+    m([[-48, 82], [-76, 68], [-104, 124], [-72, 142]], G3, [G2, 0.3]);
+    for (let i = 0; i < 4; i++) {
+      m([[-50 - i * 6.5, 84 + i * 13], [-76 - i * 6.5, 71 + i * 13], [-81 - i * 6.5, 81 + i * 13], [-55 - i * 6.5, 94 + i * 13]], G4);
+      m([[-50 - i * 6.5, 84 + i * 13], [-76 - i * 6.5, 71 + i * 13], [-77 - i * 6.5, 74 + i * 13], [-51 - i * 6.5, 87 + i * 13]], G5);
+    }
+    // jaw: a hooked blade, bright along the cutting edge, dark on the back
+    m([[1, 6], [19, -20], [17, -54], [4, -70], [1, -44], [7, -24], [0, -4]], M4, [M3, 0.3]);
+    m([[1, -44], [4, -70], [7, -65], [4, -43]], M6);
+    m([[19, -20], [17, -54], [13, -51], [14, -22]], M2);
+    m([[7, -24], [1, -44], [3, -44], [9, -25]], M6);
+  }
+  spin = null;
+  fill(oval(0, -62, 7, 7, 0, Math.PI * 2, 12), M2);
+  fill(oval(0, -62, 4.5, 4.5, 0, Math.PI * 2, 10), M5);
+  rect(-1, -63, 2, 2, INK);
+  outline(INK);
+  if (biting && snip > 0.25) for (const [x, y] of [[-10, -108], [8, -114], [-2, -122], [13, -100], [-15, -96]]) rect(x * (1.4 - snip), y, 2, 2, snip > 0.6 ? PALE : AMBER);
+}
+
+function drawCar(width, height) {
+  // Behind the wheel: roof lining, pillars, the mirror with a tree swinging from it, a dash with two lit dials and a radio,
+  // the wheel, and your hands on it.
+  const car = game.car, speed = Math.abs(car.v), turn = car.stage === 'flee' ? 0.12 * Math.sin(time * 9) : 0.04 * Math.sin(time * 1.7);
+  ox = Math.round(Math.sin(time * 23) * Math.min(1, speed / 8) + game.shake * 4 * Math.sin(time * 61));
+  oy = Math.round(Math.cos(time * 19) * Math.min(1.5, speed / 6) + game.shake * 5 * Math.sin(time * 47));
+  const w = width, h = height, sill = h * 0.68;
+  rect(-8, -8, w + 16, 22, INK);
+  rect(-8, 14, w + 16, 3, INK, [M1, 0.5]);
+  fill([[-8, 0], [36, 0], [13, sill], [-8, sill]], INK);
+  fill([[30, 14], [36, 0], [13, sill], [9, sill]], M1, [M2, 0.4]);
+  fill([[w + 8, 0], [w - 54, 0], [w - 21, sill], [w + 8, sill]], INK);
+  fill([[w - 46, 14], [w - 54, 0], [w - 21, sill], [w - 17, sill]], M1, [M2, 0.4]);
+  // mirror: the road behind, empty
+  rect(w * 0.5 + 1, 0, 3, 12, INK);
+  rect(w * 0.5 - 33, 8, 70, 21, INK);
+  rect(w * 0.5 - 30, 11, 64, 15, '#122048');
+  rect(w * 0.5 - 30, 18, 64, 3, '#1a2d5c', ['#263d70', 0.5]);
+  rect(w * 0.5 - 30, 21, 64, 5, '#0e120f');
+  rect(w * 0.5 - 30, 11, 64, 1, M3);
+  const swing = Math.sin(time * 2.3) * Math.min(1, 0.15 + speed / 9) * 7 - car.v * 0.25, tx = w * 0.5 + 12 + swing, ty = 46;
+  stroke([w * 0.5 + 12, 29], [tx, ty - 9], 1, M3);
+  fill([[tx, ty - 10], [tx + 6, ty - 2], [tx + 3, ty - 2], [tx + 8, ty + 6], [tx + 2, ty + 6], [tx + 2, ty + 10], [tx - 2, ty + 10], [tx - 2, ty + 6], [tx - 8, ty + 6], [tx - 3, ty - 2], [tx - 6, ty - 2]], '#2c3a22', ['#465530', 0.4]);
+  // dashboard: a long crowned top, lit along its edge by the sky
+  const crown = x => h * 0.72 - Math.sin(Math.min(1, x / (w * 0.58)) * Math.PI) * h * 0.075 - Math.max(0, x - w * 0.58) / (w * 0.42) * h * 0.045;
+  const edge = Array.from({ length: 25 }, (_, i) => [-8 + (w + 16) * i / 24, crown(-8 + (w + 16) * i / 24)]);
+  fill([...edge, [w + 8, h + 8], [-8, h + 8]], INK);
+  fill([...edge, ...edge.map(([x, y]) => [x, y + 2]).reverse()], M3);
+  fill([...edge.map(([x, y]) => [x, y + 2]), ...edge.map(([x, y]) => [x, y + 9]).reverse()], M1, [INK, 0.5]);
+  // vents and the radio
+  for (let i = 0; i < 5; i++) rect(w * 0.66 + i * 9, h * 0.775, 6, 2, M2);
+  rect(w * 0.63, h * 0.81, 74, 26, M1);
+  rect(w * 0.63, h * 0.81, 74, 1, M3);
+  rect(w * 0.63 + 5, h * 0.81 + 5, 40, 8, '#1c1206');
+  for (let i = 0; i < 7; i++) if (Math.sin(time * 5 + i * 1.9) > -0.2) rect(w * 0.63 + 8 + i * 5, h * 0.81 + 7, 3, 4, AMBER);
+  for (let i = 0; i < 2; i++) {
+    fill(oval(w * 0.63 + 54 + i * 12, h * 0.81 + 10, 4, 4, 0, Math.PI * 2, 9), M3);
+    rect(w * 0.63 + 54 + i * 12, h * 0.81 + 7, 1, 3, M6);
+  }
+  for (let i = 0; i < 5; i++) rect(w * 0.63 + 5 + i * 9, h * 0.81 + 18, 6, 3, M2);
+  // two dials under a hood
+  fill(oval(w * 0.28, h * 0.745, 92, 26, Math.PI, Math.PI * 2, 18), M1, [M2, 0.25]);
+  for (const [cx, value] of [[0.2, speed / 16], [0.36, 0.25 + speed / 30]]) {
+    const x = w * cx, y = h * 0.8, a = Math.PI * (0.85 + 1.3 * Math.min(1, value));
+    fill([oval(x, y, 18, 18), oval(x, y, 15, 15)], M3);
+    fill(oval(x, y, 15, 15), '#05070c');
+    for (let i = 0; i < 9; i++) {
+      const b = Math.PI * (0.85 + 1.3 * i / 8);
+      stroke([x + Math.cos(b) * 11, y + Math.sin(b) * 11], [x + Math.cos(b) * 14, y + Math.sin(b) * 14], i > 6 ? 2 : 1.4, i > 6 ? R4 : '#93803e');
+    }
+    stroke([x, y], [x + Math.cos(a) * 12, y + Math.sin(a) * 12], 1.6, AMBER);
+    rect(x - 1, y - 1, 3, 3, PALE);
+  }
+  // wheel: a thick rim with a lit top, two spokes and a hub
+  const wx = w * 0.28, wy = h * 1.05;
+  fill([oval(wx, wy, 114, 102), oval(wx, wy, 97, 86)], M1, [M2, 0.3]);
+  fill([oval(wx, wy, 114, 102, Math.PI * 1.1, Math.PI * 1.9, 20), oval(wx, wy, 110, 98, Math.PI * 1.9, Math.PI * 1.1, 20)].flat(), M4);
+  for (const a of [-2.62, -0.52]) {
+    const c = Math.cos(a + turn), s = Math.sin(a + turn);
+    stroke([wx + c * 22, wy + s * 20], [wx + c * 100, wy + s * 90], 15, M1, [M2, 0.3]);
+  }
+  fill(oval(wx, wy, 30, 26), M2, [M1, 0.4]);
+  for (const a of [-2.2, -0.95]) {
+    const hx = wx + Math.cos(a + turn) * 106, hy = wy + Math.sin(a + turn) * 94, d = a < -1.5 ? -1 : 1;
+    fill([[hx - 4 * d, hy + 8], [hx + 15 * d, hy + 4], [hx + 44 * d, hy + 90], [hx + 8 * d, hy + 90]], S2, [S3, 0.3]);
+    fill([[hx - 13, hy - 9], [hx + 13, hy - 11], [hx + 16, hy + 9], [hx - 11, hy + 13]], G3, [G2, 0.3]);
+    for (let i = 0; i < 4; i++) {
+      rect(hx - 12 + i * 7, hy - 11, 6, 9, G4);
+      rect(hx - 12 + i * 7, hy - 11, 6, 2, G5);
+    }
+  }
+}
+
+function drawOver(width, height, dt, moving) {
+  if (CW !== width || CH !== height) {
+    over.width = CW = width;
+    over.height = CH = height;
+    image = pen.createImageData(width, height);
+    pixels = new Uint32Array(image.data.buffer);
+  }
+  pixels.fill(0);
+  spin = null;
+  if (game.phase === 'intro') drawCar(width, height);
+  else {
+    kick = Math.max(0, kick - dt * 14);
+    flash = Math.max(0, flash - dt * 22);
+    swap = Math.max(0, swap - dt * 4.5);
+    snip = Math.max(0, snip - dt * 4);
+    for (const c of casings) { c.x += c.vx * dt; c.y += c.vy * dt; c.vy += 520 * dt; c.life -= dt; }
+    while (casings.length && casings[0].life <= 0) casings.shift();
+    const me = game.player, sway = moving ? Math.sin(me.bob) * 3 : Math.sin(time * 1.3), lift = moving ? Math.abs(Math.cos(me.bob)) * 3 : Math.sin(time * 1.9);
+    const reload = me.reload > 0 ? 1 - me.reload / 1.5 : 0;
+    const drop = swap * 120 + me.down * 150 + (me.dash > 0 ? 26 : 0) + Math.sin(Math.PI * reload) * 30;
+    if (tool === 'gun') {
+      // recoil runs back along the barrel and climbs a little while the trigger is held
+      ox = Math.round(width * 0.5 + 6 + sway + kick * 5 + me.heat * 2);
+      oy = Math.round(height - 66 + lift + kick * 5 + drop - me.heat * 5);
+      drawGun(reload);
+    } else {
+      ox = Math.round(width * 0.5 + sway);
+      oy = Math.round(height - 4 + lift + drop - snip * 5);
+      drawCutters((game.cutTarget?.cut ?? 0) > 0 || !!game.cutLeg);
+    }
+  }
+  pen.putImageData(image, 0, 0);
+}
+
+// ---- frame ----
+function tick(now) {
+  const dt = previous === undefined ? 0 : Math.min(0.05, (now - previous) / 1000);
+  previous = now;
+  // a window that has not been laid out yet reports no size; fall back to 4:3 until it has one
+  const height = ROWS, width = Math.max(200, Math.min(720, Math.round(ROWS * (innerWidth / innerHeight || 4 / 3) / 2) * 2)) || 400;
+  if (world) {
+    const mx = axis('KeyD', 'KeyA'), mz = axis('KeyW', 'KeyS');
+    if (playing || ended) {
+      time += dt;
+      // Arrow keys turn the view too: a laptop touchpad is usually switched off by the system while keys are held.
+      look.yaw += axis('ArrowLeft', 'ArrowRight') * 2.3 * dt;
+      look.pitch = Math.min(1.35, Math.max(-1.2, look.pitch + axis('ArrowUp', 'ArrowDown') * 1.5 * dt));
+      const live = playing && !ended;
+      game.step(dt, { mx: live ? mx : 0, mz: live ? mz : 0, yaw: look.yaw, pitch: look.pitch, tool, dodge: live && dodge, reload: live && reload,
+        fire: live && (firing || keys.has('KeyF')), sprint: keys.has('ShiftLeft') || keys.has('ShiftRight') });
+      dodge = false;
+      reload = false;
+      world.anim.update(dt, time);
+      if (game.phase === 'intro' && game.car.stage !== 'black') sound.engine(game.car.v);
+    } else if (!world.drawn) {
+      world.anim.update(0, time);
+      world.drawn = true;
+    }
+    for (const event of game.events.splice(0)) cues[event.type]?.(event);
+    const rows = game.stage.rows, changedRows = [];
+    for (let i = 0; i < rows.length; i++) if (rows[i]) changedRows.push(i);
+    rows.fill(0);
+    renderer.render(world, { width, height, time, camera: game.camera(), changedRows });
+    drawOver(width, height, dt, playing && (mx || mz));
+
+    const me = game.player, target = tool === 'cutters' ? game.cutTarget : null, grip = tool === 'cutters' ? game.cutLeg : null;
+    $('flash').style.opacity = game.flash * 0.16;
+    $('hurt').style.opacity = Math.min(1, me.hurt + (me.hp < 30 ? 0.25 + 0.1 * Math.sin(time * 6) : 0));
+    $('pulse').firstElementChild.style.width = me.hp + '%';
+    $('dodge').firstElementChild.style.width = Math.min(100, Math.max(0, 100 * (1 - me.dodgeCool / 0.8))) + '%';
+    const up = game.pylons.filter(p => !['dormant', 'dead', 'dying'].includes(p.state)).length;
+    $('count').innerHTML = `Felled <b>${game.kills}</b> / ${game.total}<br>Walking <b>${up}</b>`;
+    const rounds = me.reload > 0 ? 'Reloading' : `<span class="${me.ammo ? '' : 'low'}">${String(me.ammo).padStart(2, '0')}</span> / ${me.reserve}`;
+    $('tools').innerHTML = `<div id="ammo" class="${me.ammo + me.reserve < 12 ? 'low' : ''}">${rounds}</div>` +
+      (tool === 'gun' ? '<b>1 · Rivet carbine</b>' : '1 · Rivet carbine') + '<br>' + (tool === 'cutters' ? '<b>2 · Bolt cutters</b>' : '2 · Bolt cutters');
+    $('prompt').hidden = tool !== 'cutters' || ended || !!target || !!grip;
+    const closest = Math.min(Infinity, ...game.marks.filter(m => m.kind === 'leg').map(m => m.reach));
+    $('prompt').firstElementChild.textContent = target ? 'Hold to cut it down' : grip ? 'Hold to sever the leg' :
+      closest < 12 ? `Nearest leg ${closest.toFixed(0)} m · get within 4 while it is planted` : 'Follow the markers to a leg or a sleeping pylon’s feet';
+    $('prompt').lastElementChild.style.visibility = target || grip ? 'visible' : 'hidden';
+    $('prompt').lastElementChild.firstElementChild.style.width = (target ? target.cut : grip ? grip.leg.cutT : 0) * 100 + '%';
+    // pin a marker to each thing the cutters could take: faint when out of reach, loud when you can bite now
+    const marks = playing && !ended ? game.marks : [], pool = $('marks');
+    while (pool.children.length < marks.length) pool.insertAdjacentHTML('beforeend', '<div class="mark"><i></i><b></b></div>');
+    for (let i = 0; i < pool.children.length; i++) {
+      const el = pool.children[i], m = marks[i], at = m && game.screen(m.at, width / height);
+      if (!at || at[0] < -0.05 || at[0] > 1.05 || at[1] < -0.05 || at[1] > 1.05) { el.style.display = 'none'; continue; }
+      el.style.display = 'block';
+      el.style.left = at[0] * 100 + '%';
+      el.style.top = at[1] * 100 + '%';
+      el.className = 'mark' + (m.active ? ' near active' : m.near ? ' near' : m.kind === 'leg' && !m.planted ? ' lifted' : '');
+      el.style.setProperty('--done', Math.round(m.progress * 100) + '%');
+      el.lastElementChild.textContent = m.active && (firing || keys.has('KeyF')) ? 'Cutting' : m.kind === 'leg' ? 'Hold · sever leg' : 'Hold · cut down';
+    }
+    const s = Math.floor(time);
+    $('stamp').textContent = `REC ● 22.11.2026  20:${String(41 + Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+  }
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+
+// Let the title paint before the build blocks the page.
+setTimeout(() => {
+  world = scene.build(scene.seed);
+  game = world.game;
+  $('go').innerHTML = '<b>Click to drive</b>';
+  window.pylonField = { world, renderer, get game() { return game; }, look, begin, pick };
+}, 50);
+</script>
+</html>
