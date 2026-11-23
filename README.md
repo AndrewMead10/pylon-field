@@ -1,5 +1,7 @@
 # Pylon Field
 
+[![Pylon Field cover: a walking pylon with red lamps looms over a rivet carbine under a lightning strike](site/cover.png)](https://game.amqm.dev)
+
 A first-person fight at dusk under a dry lightning storm, drawn in pixel-art Gaussian splats.
 
 You crest a hill and find two power pylons tearing a car apart on the road, inside a ring of others that still look like
